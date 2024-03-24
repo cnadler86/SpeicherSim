@@ -2,7 +2,7 @@ import gspread
 import pandas as pd
 import os
 import numpy as np
-import multiprocessing
+from multiprocessing import Pool
 from HoymilesMain import getHoymilesData
 from gspread_dataframe import set_with_dataframe
 
@@ -23,36 +23,14 @@ Setups.append(setup(2000,400,1.9))
 Setups.append(setup(2400,400,1.9))
 Setups.append(setup(float('inf'),400,1.9))
 
-gc = gspread.oauth(scopes=gspread.auth.DEFAULT_SCOPES,
-                   credentials_filename=os.path.join(os.getcwd(),"credentials.json"),
-                   authorized_user_filename=os.path.join(os.getcwd(),"authorized_user.json"))
-# gc = gspread.oauth_from_dict(scopes=gspread.auth.READONLY_SCOPES,credentials=)
-sh = gc.open("Shelly Data")
-
-TotalEnergyProduced = np.sum(getHoymilesData(['total_eq','today_eq'])) * 1000
-OvweviewSheet = sh.worksheet("Overview")
-Totals = pd.DataFrame(OvweviewSheet.get_all_records(numericise_ignore=['all']))
-Totals['TotalConsumed'] = Totals['TotalConsumed'].replace(',', '.', regex=True).astype(float)
-Totals['TotalReturned'] = Totals['TotalReturned'].replace(',', '.', regex=True).astype(float)
-BlindEnergyInPhase = TotalEnergyProduced -Totals.loc[1,'TotalReturned'] #Use Phase b for me
-
-ResData = pd.DataFrame(index=['Total energy used without Battery:',
-    'Total energy returned:',
-    'Total battery energy used:',
-    'Maximal battery capacity reached:',
-    'Median maximal battery capacity reached:',
-    'Number of times the maximal capacity was reached:',
-    'Number of battery cycles:',
-    'Plant energy ratio without battery:',
-    'Plant self-sufficiency without battery:',
-    'Battery self-sufficiency:',
-    'Overall self-sufficiency:'])
-
-worksheet = sh.worksheet("Total")
-df = pd.DataFrame(worksheet.get_all_records(numericise_ignore=['all'])).drop('Balance',axis=1)
-df['Timestamp'] = pd.to_datetime(df['Timestamp'])
-df['TotalConsumed'] = df['TotalConsumed'].replace(',', '.', regex=True).astype(float)
-df['TotalReturned'] = df['TotalReturned'].replace(',', '.', regex=True).astype(float)
+def init_worker(igc, iTotals, iBlindEnergyInPhase, iTotalEnergyProduced, idf, iResData):
+    global gc, Totals, BlindEnergyInPhase, TotalEnergyProduced, df, ResData
+    gc = igc
+    Totals = iTotals
+    BlindEnergyInPhase = iBlindEnergyInPhase
+    TotalEnergyProduced = iTotalEnergyProduced
+    df = idf
+    ResData = iResData
 
 def calcBattery(Setup):
     print('Calculating {:s}'.format(repr(Setup).replace('\n',' ')))
@@ -121,15 +99,49 @@ def calcBattery(Setup):
     Results.append('%.1f %%' % ((TotalEnergyUsedNoBattery/TotalConsumed + BlindEnergyInPhase/Totals['TotalConsumed'].sum())*100))
     Results.append('%.1f %%' % (BatteryEnergyUsed/TotalConsumed*100))
     Results.append('%.1f %%' % ((TotalEnergyUsedNoBattery/TotalConsumed + BlindEnergyInPhase/Totals['TotalConsumed'].sum() + BatteryEnergyUsed/TotalConsumed)*100))
-    return Results
+    return pd.Series(data=Results, name=repr(Setup), index=ResData.index)
 
-for Setup in Setups:
-    Results = calcBattery(Setup)
-    ResData[repr(Setup)] = Results
+if __name__ == '__main__':
+    gc = gspread.oauth(scopes=gspread.auth.DEFAULT_SCOPES,
+                credentials_filename=os.path.join(os.getcwd(),"credentials.json"),
+                authorized_user_filename=os.path.join(os.getcwd(),"authorized_user.json"))
+    # gc = gspread.oauth_from_dict(scopes=gspread.auth.READONLY_SCOPES,credentials=)
+    sh = gc.open("Shelly Data")
 
-print('\n')
-print(ResData)
+    TotalEnergyProduced = np.sum(getHoymilesData(['total_eq','today_eq'])) * 1000
+    OvweviewSheet = sh.worksheet("Overview")
+    Totals = pd.DataFrame(OvweviewSheet.get_all_records(numericise_ignore=['all']))
+    Totals['TotalConsumed'] = Totals['TotalConsumed'].replace(',', '.', regex=True).astype(float)
+    Totals['TotalReturned'] = Totals['TotalReturned'].replace(',', '.', regex=True).astype(float)
+    BlindEnergyInPhase = TotalEnergyProduced -Totals.loc[1,'TotalReturned'] #Use Phase b for me
 
-OutSh = gc.open("Battery Sim")
-set_with_dataframe(OutSh.worksheet("Overview"), ResData, include_index=True)
-# set_with_dataframe(OutSh.worksheet("Data"), df.drop(['EnergyUsed', 'TotalConsumed', 'TotalReturned'],axis=1))
+    ResData = pd.DataFrame(index=['Total energy used without Battery:',
+        'Total energy returned:',
+        'Total battery energy used:',
+        'Maximal battery capacity reached:',
+        'Median maximal battery capacity reached:',
+        'Number of times the maximal capacity was reached:',
+        'Number of battery cycles:',
+        'Plant energy ratio without battery:',
+        'Plant self-sufficiency without battery:',
+        'Battery self-sufficiency:',
+        'Overall self-sufficiency:'])
+
+    worksheet = sh.worksheet("Total")
+    df = pd.DataFrame(worksheet.get_all_records(numericise_ignore=['all'])).drop('Balance',axis=1)
+    df['Timestamp'] = pd.to_datetime(df['Timestamp'])
+    df['TotalConsumed'] = df['TotalConsumed'].replace(',', '.', regex=True).astype(float)
+    df['TotalReturned'] = df['TotalReturned'].replace(',', '.', regex=True).astype(float)
+    # create the process pool
+    
+    with Pool(initializer=init_worker, initargs=(gc, Totals, BlindEnergyInPhase, TotalEnergyProduced, df, ResData,)) as pool:
+        # call the same function with different data in parallel
+        for result in pool.imap(calcBattery, Setups):
+            ResData[result.name] = result
+
+    print('\n')
+    print(ResData)
+
+    OutSh = gc.open("Battery Sim")
+    set_with_dataframe(OutSh.worksheet("Overview"), ResData, include_index=True)
+    # set_with_dataframe(OutSh.worksheet("Data"), df.drop(['EnergyUsed', 'TotalConsumed', 'TotalReturned'],axis=1))
