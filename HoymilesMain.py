@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import numpy as np
 from datetime import datetime
 from hoymilesapi import Hoymiles
 
@@ -59,4 +60,8 @@ def getHoymilesData(Data) -> float:
             quit()
 
         plant_list[id].get_solar_data()
-        return float(plant_list[config['HOYMILES_PLANT_ID']].solar_data[Data])
+
+        y = np.zeros(len(Data))
+        for i in range(len(Data)):
+            y[i] = float(plant_list[config['HOYMILES_PLANT_ID']].solar_data[Data[i]])
+        return y

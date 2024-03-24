@@ -1,6 +1,7 @@
 import gspread
 import pandas as pd
 import os
+import numpy as np
 import multiprocessing
 from HoymilesMain import getHoymilesData
 from gspread_dataframe import set_with_dataframe
@@ -28,7 +29,7 @@ gc = gspread.oauth(scopes=gspread.auth.DEFAULT_SCOPES,
 # gc = gspread.oauth_from_dict(scopes=gspread.auth.READONLY_SCOPES,credentials=)
 sh = gc.open("Shelly Data")
 
-TotalEnergyProduced = (getHoymilesData('total_eq') + getHoymilesData('today_eq')) * 1000
+TotalEnergyProduced = np.sum(getHoymilesData(['total_eq','today_eq'])) * 1000
 OvweviewSheet = sh.worksheet("Overview")
 Totals = pd.DataFrame(OvweviewSheet.get_all_records(numericise_ignore=['all']))
 Totals['TotalConsumed'] = Totals['TotalConsumed'].replace(',', '.', regex=True).astype(float)
@@ -53,7 +54,8 @@ df['Timestamp'] = pd.to_datetime(df['Timestamp'])
 df['TotalConsumed'] = df['TotalConsumed'].replace(',', '.', regex=True).astype(float)
 df['TotalReturned'] = df['TotalReturned'].replace(',', '.', regex=True).astype(float)
 
-for Setup in Setups:
+def calcBattery(Setup):
+    print('Calculating {:s}'.format(repr(Setup).replace('\n',' ')))
     BatteryDf = df[['Timestamp']].copy()
     BatteryDf['EnergyStored'] = 0.0
     BatteryDf['EnergyUsed'] = 0.0
@@ -100,8 +102,8 @@ for Setup in Setups:
         
         if (BatteryDf['EnergyStored'][ind]<(MaxCapacity/2)):
             NumMaxCapacityReachedSet = False
-        
-        MaxCapacityReached = max(MaxCapacityReached,BatteryDf['EnergyStored'][ind])
+    
+    MaxCapacityReached = BatteryDf['EnergyStored'].max()
     dfDay = BatteryDf.set_index(pd.DatetimeIndex(BatteryDf["Timestamp"])).drop(['Timestamp'],axis=1).resample('D').max()
     BatteryDf = BatteryDf.rename(columns={"EnergyStored": repr(Setup)})
     TotalEnergyUsedNoBattery = BatteryDf['EnergyUsed'].sum()
@@ -119,6 +121,10 @@ for Setup in Setups:
     Results.append('%.1f %%' % ((TotalEnergyUsedNoBattery/TotalConsumed + BlindEnergyInPhase/Totals['TotalConsumed'].sum())*100))
     Results.append('%.1f %%' % (BatteryEnergyUsed/TotalConsumed*100))
     Results.append('%.1f %%' % ((TotalEnergyUsedNoBattery/TotalConsumed + BlindEnergyInPhase/Totals['TotalConsumed'].sum() + BatteryEnergyUsed/TotalConsumed)*100))
+    return Results
+
+for Setup in Setups:
+    Results = calcBattery(Setup)
     ResData[repr(Setup)] = Results
 
 print('\n')
