@@ -132,14 +132,12 @@ if __name__ == '__main__':
     df['Timestamp'] = pd.to_datetime(df['Timestamp'])
     df['TotalConsumed'] = df['TotalConsumed'].replace(',', '.', regex=True).astype(float)
     df['TotalReturned'] = df['TotalReturned'].replace(',', '.', regex=True).astype(float)
-    # create the process pool
     
+    # create the process pool
     with Pool(initializer=init_worker, initargs=(gc, Totals, BlindEnergyInPhase, TotalEnergyProduced, df, ResData,)) as pool:
-        # call the same function with different data in parallel
         for result in pool.imap(calcBattery, Setups):
             ResData[result.name] = result
 
-    print('\n')
     print(ResData)
 
     OutSh = gc.open("Battery Sim")
