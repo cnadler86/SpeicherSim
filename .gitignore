@@ -1,0 +1,6 @@
+/.venv
+/authorized_user.json
+/BatterySimulator - Kopie.py
+/credentials.json
+/output.xlsx
+/__pycache__
