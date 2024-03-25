@@ -5,6 +5,7 @@ import numpy as np
 from multiprocessing import Pool
 from HoymilesMain import getHoymilesData
 from gspread_dataframe import set_with_dataframe
+from datetime import datetime
 
 class setup:
     CAPACITY_FACTOR = 0.9
@@ -146,3 +147,4 @@ if __name__ == '__main__':
     OutSh.worksheet("Data").clear()
     set_with_dataframe(OutSh.worksheet("Overview"), ResData, include_index=True)
     set_with_dataframe(OutSh.worksheet("Data"), df.drop(['TotalConsumed', 'TotalReturned'],axis=1))
+    # OutSh.worksheet("Overview").update(range_name='A1', values=datetime.now().strftime("%d.%m.%Y %H:%M:%S"))
