@@ -83,7 +83,7 @@ def calcBattery(Setup):
     
     MaxCapacityReached = BatteryDf['EnergyStored'].max()
     dfDay = BatteryDf.set_index(pd.DatetimeIndex(BatteryDf["Timestamp"])).drop(['Timestamp'],axis=1).resample('D').max()
-    BatteryDf = BatteryDf.rename(columns={"EnergyStored": repr(Setup)})
+    # BatteryDf = BatteryDf.rename(columns={"EnergyStored": repr(Setup)})
     TotalEnergyUsedNoBattery = BatteryDf['EnergyUsed'].sum()
     TotalConsumed = df['TotalConsumed'].sum()
 
@@ -99,7 +99,7 @@ def calcBattery(Setup):
     Results.append('%.1f %%' % ((TotalEnergyUsedNoBattery/TotalConsumed + BlindEnergyInPhase/Totals['TotalConsumed'].sum())*100))
     Results.append('%.1f %%' % (BatteryEnergyUsed/TotalConsumed*100))
     Results.append('%.1f %%' % ((TotalEnergyUsedNoBattery/TotalConsumed + BlindEnergyInPhase/Totals['TotalConsumed'].sum() + BatteryEnergyUsed/TotalConsumed)*100))
-    return pd.Series(data=Results, name=repr(Setup), index=ResData.index)
+    return pd.Series(data=Results, name=repr(Setup), index=ResData.index), BatteryDf['EnergyStored']
 
 if __name__ == '__main__':
     gc = gspread.oauth(scopes=gspread.auth.DEFAULT_SCOPES,
@@ -136,10 +136,13 @@ if __name__ == '__main__':
     # create the process pool
     with Pool(initializer=init_worker, initargs=(gc, Totals, BlindEnergyInPhase, TotalEnergyProduced, df, ResData,)) as pool:
         for result in pool.imap(calcBattery, Setups):
-            ResData[result.name] = result
+            ResData[result[0].name] = result[0]
+            df = pd.concat([df, result[1].rename(result[0].name)], axis=1)
 
     print(ResData)
 
     OutSh = gc.open("Battery Sim")
+    OutSh.worksheet("Overview").clear()
+    OutSh.worksheet("Data").clear()
     set_with_dataframe(OutSh.worksheet("Overview"), ResData, include_index=True)
-    # set_with_dataframe(OutSh.worksheet("Data"), df.drop(['EnergyUsed', 'TotalConsumed', 'TotalReturned'],axis=1))
+    set_with_dataframe(OutSh.worksheet("Data"), df.drop(['TotalConsumed', 'TotalReturned'],axis=1))
