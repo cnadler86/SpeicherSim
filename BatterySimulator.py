@@ -32,6 +32,8 @@ def init_worker(igc, iTotals, iBlindEnergyInPhase, iTotalEnergyProduced, idf, iR
     TotalEnergyProduced = iTotalEnergyProduced
     df = idf
     ResData = iResData
+def getRoundedThreshold(a, MinClip):
+    return np.round(np.array(a, dtype=float) / MinClip) * MinClip
 
 def calcBattery(Setup):
     print('Calculating {:s}'.format(repr(Setup).replace('\n',' ')))
@@ -83,17 +85,19 @@ def calcBattery(Setup):
             NumMaxCapacityReachedSet = False
     
     MaxCapacityReached = BatteryDf['EnergyStored'].max()
-    dfDay = BatteryDf.set_index(pd.DatetimeIndex(BatteryDf["Timestamp"])).drop(['Timestamp'],axis=1).resample('D').max()
-    # BatteryDf = BatteryDf.rename(columns={"EnergyStored": repr(Setup)})
+    dfDay = BatteryDf.set_index(pd.DatetimeIndex(BatteryDf["Timestamp"])).drop(['Timestamp'],axis=1).resample('D').max().apply(lambda x: getRoundedThreshold(x,50))
+    dfDay.hist()
     TotalEnergyUsedNoBattery = BatteryDf['EnergyUsed'].sum()
     TotalConsumed = df['TotalConsumed'].sum()
 
     Results = list()
-    Results.append('%.0f kWh' % TotalEnergyUsedNoBattery)
-    Results.append(' %.0f kWh' % EnergyReturned)
-    Results.append('%.0f kWh' % BatteryEnergyUsed)
-    Results.append('%.0f kWh' % MaxCapacityReached)
-    Results.append('%.0f kWh' % dfDay.EnergyStored.median())
+    Results.append('%.1f kWh' % TotalEnergyUsedNoBattery/1000)
+    Results.append(' %.1f kWh' % EnergyReturned/1000)
+    Results.append('%.1f kWh' % BatteryEnergyUsed/1000)
+    Results.append('%.1f kWh' % MaxCapacityReached/1000)
+    Results.append('%.1f kWh' % dfDay['EnergyStored'].median()/1000)
+    Results.append('%.1f kWh' % np.percentile(dfDay['EnergyStored'],75)/1000)
+    Results.append('%.1f kWh' % np.percentile(dfDay['EnergyStored'],90)/1000)
     Results.append('%i' % NumMaxCapacityReached)
     Results.append('%i' % NumCycles)
     Results.append('%.1f %%' % ((TotalEnergyUsedNoBattery/(df['TotalReturned'].sum()*Factor) + BlindEnergyInPhase/TotalEnergyProduced)*100))
@@ -106,7 +110,6 @@ if __name__ == '__main__':
     gc = gspread.oauth(scopes=gspread.auth.DEFAULT_SCOPES,
                 credentials_filename=os.path.join(os.getcwd(),"credentials.json"),
                 authorized_user_filename=os.path.join(os.getcwd(),"authorized_user.json"))
-    # gc = gspread.oauth_from_dict(scopes=gspread.auth.READONLY_SCOPES,credentials=)
     sh = gc.open("Shelly Data")
 
     TotalEnergyProduced = np.sum(getHoymilesData(['total_eq','today_eq'])) * 1000
@@ -121,6 +124,8 @@ if __name__ == '__main__':
         'Total battery energy used:',
         'Maximal battery capacity reached:',
         'Median maximal battery capacity reached:',
+        '75% percentile battery capacity reached:',
+        '90% percentile battery capacity reached:',
         'Number of times the maximal capacity was reached:',
         'Number of battery cycles:',
         'Plant energy ratio without battery:',
@@ -147,4 +152,3 @@ if __name__ == '__main__':
     OutSh.worksheet("Data").clear()
     set_with_dataframe(OutSh.worksheet("Overview"), ResData, include_index=True)
     set_with_dataframe(OutSh.worksheet("Data"), df.drop(['TotalConsumed', 'TotalReturned'],axis=1))
-    # OutSh.worksheet("Overview").update(range_name='A1', values=datetime.now().strftime("%d.%m.%Y %H:%M:%S"))
