@@ -91,9 +91,9 @@ def calcBattery(Setup):
     TotalConsumed = df['TotalConsumed'].sum()
 
     Results = list()
-    Results.append('%.1f kWh' % TotalEnergyUsedNoBattery/1000)
-    Results.append(' %.1f kWh' % EnergyReturned/1000)
-    Results.append('%.1f kWh' % BatteryEnergyUsed/1000)
+    Results.append('%.1f kWh' % (TotalEnergyUsedNoBattery/1000))
+    Results.append('%.1f kWh' % (EnergyReturned/1000))
+    Results.append('%.1f kWh' % (BatteryEnergyUsed/1000))
     Results.append('%.1f Wh' % MaxCapacityReached)
     Results.append('%.1f Wh' % dfDay['EnergyStored'].median())
     Results.append('%.1f Wh' % np.percentile(dfDay['EnergyStored'],75))
