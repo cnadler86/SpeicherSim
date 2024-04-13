@@ -18,11 +18,11 @@ class setup:
 
 # creating list
 Setups = []
-Setups.append(setup(1000,400,1.9))
-Setups.append(setup(1500,400,1.9))
-Setups.append(setup(2000,400,1.9))
-Setups.append(setup(2400,400,1.9))
-Setups.append(setup(float('inf'),400,1.9))
+Setups.append(setup(1000,400,1))
+Setups.append(setup(1500,400,1.85))
+Setups.append(setup(2000,400,1.85))
+Setups.append(setup(2400,400,1.85))
+Setups.append(setup(float('inf'),400,1.85))
 
 def init_worker(igc, iTotals, iBlindEnergyInPhase, iTotalEnergyProduced, idf, iResData):
     global gc, Totals, BlindEnergyInPhase, TotalEnergyProduced, df, ResData
