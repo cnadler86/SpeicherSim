@@ -18,11 +18,11 @@ class setup:
 
 # creating list
 Setups = []
-Setups.append(setup(500,400,1))
-Setups.append(setup(1000,400,1))
+Setups.append(setup(1900,800,1))
+# Setups.append(setup(1000,400,1))
 # Setups.append(setup(1500,400,1.85))
 # Setups.append(setup(2000,400,1.85))
-Setups.append(setup(2400,400,1.85))
+# Setups.append(setup(2400,400,1.85))
 # Setups.append(setup(float('inf'),400,1.85))
 
 def init_worker(igc, iTotals, iBlindEnergyInPhase, iTotalEnergyProduced, idf, iResData):
@@ -33,6 +33,7 @@ def init_worker(igc, iTotals, iBlindEnergyInPhase, iTotalEnergyProduced, idf, iR
     TotalEnergyProduced = iTotalEnergyProduced
     df = idf
     ResData = iResData
+
 def getRoundedThreshold(a, MinClip):
     return np.round(np.array(a, dtype=float) / MinClip) * MinClip
 
@@ -114,6 +115,7 @@ if __name__ == '__main__':
     sh = gc.open("Shelly Data")
 
     TotalEnergyProduced = np.sum(getHoymilesData(['total_eq','today_eq'])) * 1000
+    # TotalEnergyProduced = 420 * 1000
     OvweviewSheet = sh.worksheet("Overview")
     Totals = pd.DataFrame(OvweviewSheet.get_all_records(numericise_ignore=['all']))
     Totals['TotalConsumed'] = Totals['TotalConsumed'].replace(',', '.', regex=True).astype(float)

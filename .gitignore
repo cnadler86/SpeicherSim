@@ -1,7 +1,9 @@
 /.venv
 /authorized_user.json
 /credentials.json
-/output.xlsx
+/*.xlsx
+/*.csv
+/*.png
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
