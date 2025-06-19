@@ -22,7 +22,7 @@ class PowerConsumptionAnalyzer:
         self.rate_limit_lock = Lock()
         self.last_request_time = {}
 
-    def rate_limited_request(self, url: str, min_interval: float = 0.5) -> requests.Response:
+    def rate_limited_request(self, url: str, min_interval: float = 0.5) -> requests.Response|None:
         """Makes a rate-limited request with retries"""
         with self.rate_limit_lock:
             current_time = time.time()
@@ -77,12 +77,15 @@ class PowerConsumptionAnalyzer:
             req += f"&date_range=day&date_from={start}&date_to={end}"
 
         response = self.rate_limited_request(req)
-        data = msgspec.json.decode(response.content)
+        data = msgspec.json.decode(response.content) if response else None
         
-        if channel:
-            df = pd.DataFrame(data['history'][channel])
+        if data:
+            if channel and channel in data['history']:
+                df = pd.DataFrame(data['history'][channel])
+            else:
+                df = pd.DataFrame(data['sum'])
         else:
-            df = pd.DataFrame(data['sum'])
+            raise ValueError("No data returned from the API. Check your parameters or connection.")
         
         # Convert datetime string to proper datetime index
         if 'datetime' in df.columns:
@@ -225,6 +228,12 @@ class PowerConsumptionAnalyzer:
 
     def create_heatmap_data(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """Create pivot tables for heatmaps"""
+        if df.empty:
+            raise ValueError("DataFrame is empty. Please fetch data first.")
+        # Ensure the DataFrame has a datetime index
+        if not isinstance(df.index, pd.DatetimeIndex):
+            raise ValueError("DataFrame index must be a DatetimeIndex.")
+        
         df['hour'] = df.index.hour
         df['day'] = pd.Categorical(
             df.index.day_name(),
@@ -234,7 +243,7 @@ class PowerConsumptionAnalyzer:
         )
 
         pivot_tables = {}
-        for value in ['consumption', 'cost', 'price_per_kWh']:
+        for value in ['netto_consumption', 'cost', 'price_per_kWh']:
             pivot_tables[value] = df.pivot_table(
                 values=value,
                 index='hour',
@@ -242,7 +251,7 @@ class PowerConsumptionAnalyzer:
                 aggfunc='mean'
             )
 
-        return pivot_tables['consumption'], pivot_tables['cost'], pivot_tables['price_per_kWh']
+        return pivot_tables['netto_consumption'], pivot_tables['cost'], pivot_tables['price_per_kWh']
 
     def plot_heatmaps(self, df: pd.DataFrame, save_path: str = 'power_consumption_heatmaps.png'):
         """Create and save heatmaps for consumption, cost, and price"""
@@ -319,18 +328,137 @@ class PowerConsumptionAnalyzer:
 
         return df
 
+    def simulate_battery_storage(self, df: pd.DataFrame, capacity_wh: float, 
+                            efficiency: float, charging_power_w: int) -> pd.DataFrame:
+        """
+        Simulate battery storage operation with dynamic electricity tariffs.
+        
+        Args:
+            df: Input DataFrame with consumption and price data
+            capacity_wh: Battery capacity in Wh
+            efficiency: Battery round-trip efficiency (0-1)
+            charging_power_w: Maximum charging power in Watts
+        
+        Returns:
+            DataFrame with additional columns for adjusted consumption and costs
+        """
+        # Create copy of DataFrame to avoid modifying original
+        result_df = df.copy()
+        result_df['battery_energy'] = 0.0
+        # Calculate real netto consumption without clipping to 0
+        result_df['netto_consumption'] = df['consumption'] - df['reversed']
+        result_df['adjusted_consumption'] = result_df['netto_consumption'].copy()
+        
+        # Process day by day
+        if df.empty:
+            raise ValueError("DataFrame is empty. Please fetch data first.")
+        if not isinstance(df.index, pd.DatetimeIndex):
+            raise ValueError("DataFrame index must be a DatetimeIndex.")
+        
+        for day in pd.unique(df.index.date):
+            day_mask = df.index.date == day
+            day_df = result_df[day_mask].copy()
+            
+            # Initialize battery state for the day
+            battery_energy = 0.0
+            
+            # First, store excess energy (negative consumption)
+            excess_mask = day_df['netto_consumption'] < 0
+            for idx in day_df[excess_mask].index:
+                excess = abs(day_df.loc[idx, 'netto_consumption'])
+                chargeable = min(
+                    excess * efficiency,  # Berücksichtige Verluste beim Laden
+                    capacity_wh - battery_energy,
+                    charging_power_w  # Maximale Ladeleistung pro Stunde
+                )
+                battery_energy += chargeable
+                # Reduziere den negativen Verbrauch (Einspeisung) um die geladene Energie
+                result_df.loc[idx, 'adjusted_consumption'] = -(excess - chargeable/efficiency)
+                result_df.loc[idx, 'battery_energy'] = battery_energy
+                
+            # Charge remaining capacity in cheapest hours
+            remaining_capacity = capacity_wh - battery_energy
+            if remaining_capacity > 0:
+                # Sort hours by price (ascending) for charging strategy
+                day_prices = day_df['price_per_kWh'].sort_values()
+                
+                # Try to charge in each hour, starting with the cheapest
+                for hour in day_prices.index:
+                    if remaining_capacity <= 0:
+                        break
+                        
+                    charge_amount = min(
+                        remaining_capacity,
+                        charging_power_w  # Maximale Ladeleistung pro Stunde
+                    )
+                    
+                    # Add charging energy to consumption (considering efficiency)
+                    result_df.loc[hour, 'adjusted_consumption'] += charge_amount/efficiency
+                    battery_energy += charge_amount
+                    remaining_capacity = capacity_wh - battery_energy
+                    result_df.loc[hour, 'battery_energy'] = battery_energy
+                    
+            # Sort hours by price for discharge strategy
+            day_prices = day_df['price_per_kWh'].sort_values(ascending=False)
+            
+            # Define discharge percentages for different price levels
+            discharge_levels = [
+                (day_prices.index[:1], 0.4),   # Most expensive hour: 40%
+                (day_prices.index[1:2], 0.7),  # Second most expensive: 70%
+                (day_prices.index[2:], 1.0)    # Remaining expensive hours: 100%
+            ]
+            
+            # Apply discharge strategy
+            for hours, percentage in discharge_levels:
+                for hour in hours:
+                    if battery_energy <= 0:
+                        break
+                        
+                    consumption = result_df.loc[hour, 'adjusted_consumption']
+                    if consumption <= 0:
+                        continue
+                        
+                    target_discharge = consumption * percentage
+                    possible_discharge = min(
+                        target_discharge,
+                        battery_energy * efficiency
+                    )
+                    
+                    result_df.loc[hour, 'adjusted_consumption'] -= possible_discharge
+                    battery_energy -= possible_discharge/efficiency
+                    result_df.loc[hour, 'battery_energy'] = battery_energy
+            
+        # Calculate adjusted costs
+        # Kosten werden in Euro berechnet (Verbrauch in Wh * Preis pro kWh / 1000 für Umrechnung Wh -> kWh)
+        result_df['cost'] = result_df['adjusted_consumption'] * result_df['price_per_kWh'] / 1000
+        
+        return result_df
+
 
 if __name__ == "__main__":
-    analyzer = PowerConsumptionAnalyzer(
-        api_key="MWY1MzdmdWlk1C69C7373446071BB2B1AFB2E08DCBAEADE4E0BC177A71ACEDA8F5151F20B08163CD77E4D638C020",
-        device_id="485519dbee6d"
-    )
+    import shellyKeys
+    analyzer = PowerConsumptionAnalyzer(api_key=shellyKeys.API_KEY, device_id=shellyKeys.DEVICE_ID)
     
     # Analyze data for the last year
     # df = analyzer.analyze_power_consumption(days_to_fetch=365, netto_cost=True)
     
     # Alternative: Load from CSV
     df = analyzer.get_data_from_csv('power_consumption_data_365.csv')
-    analyzer.plot_heatmaps(df, 'power_consumption_heatmaps_from_csv.png')
+    # analyzer.plot_heatmaps(df, 'power_consumption_heatmaps_from_csv.png')
+    # Simulate battery storage
+    battery_capacity_wh = 1920*0.9
+    battery_efficiency = 0.95
+    charging_power_w = 1000 
+    df_with_battery = analyzer.simulate_battery_storage(
+        df, 
+        capacity_wh=battery_capacity_wh, 
+        efficiency=battery_efficiency, 
+        charging_power_w=charging_power_w
+    )
 
+    analyzer.plot_heatmaps(df_with_battery, 'power_consumption_heatmaps_df_with_battery.png')
+    print("Without battery: \n")
+    print(f"\nTotal cost : {df['cost'].sum():0.2f}€. Weighted average cost per kWh: \t\t\t{(df['cost'].sum() / df['netto_consumption'].sum()*100000):0.2f} cent")
+    print("With battery: \n")
+    print(f"Total cost : {df_with_battery['cost'].sum():0.2f}€. Weighted average cost per kWh: \t{(df_with_battery['cost'].sum() / df_with_battery['netto_consumption'].sum()*100000):0.2f} cent")
 

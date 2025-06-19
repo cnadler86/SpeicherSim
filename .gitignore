@@ -4,6 +4,7 @@
 /*.xlsx
 /*.csv
 /*.png
+/shellyKeys.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
