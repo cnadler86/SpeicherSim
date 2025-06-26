@@ -457,8 +457,10 @@ if __name__ == "__main__":
     )
 
     analyzer.plot_heatmaps(df_with_battery, 'power_consumption_heatmaps_df_with_battery.png')
-    print("Without battery: \n")
-    print(f"\nTotal cost : {df['cost'].sum():0.2f}€. Weighted average cost per kWh: \t\t\t{(df['cost'].sum() / df['netto_consumption'].sum()*100000):0.2f} cent")
-    print("With battery: \n")
-    print(f"Total cost : {df_with_battery['cost'].sum():0.2f}€. Weighted average cost per kWh: \t{(df_with_battery['cost'].sum() / df_with_battery['netto_consumption'].sum()*100000):0.2f} cent")
+    print("\nWithout battery:")
+    print(f"Total cost: {df['cost'].sum():0.2f}€.")
+    print(f"Weighted average cost per kWh ({df['netto_consumption'].sum()/1000:0.1f} kWh): \t{(df['cost'].sum() / df['netto_consumption'].sum()*100000):0.2f} cent")
+    print("\nWith battery:")
+    print(f"Total cost: {df_with_battery['cost'].sum():0.2f}€. ")
+    print(f"Weighted average cost per kWh ({df_with_battery['netto_consumption'].sum()/1000:0.1f} kWh): \t{(df_with_battery['cost'].sum() / df_with_battery['netto_consumption'].sum()*100000):0.2f} cent")
 
