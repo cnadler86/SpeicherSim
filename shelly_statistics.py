@@ -122,12 +122,30 @@ class PowerConsumptionAnalyzer:
         df['price_per_kWh'] = price_df['price_per_kWh']
         
         # Calculate actual cost - using vectorized operations
+        df = self.calculate_costs(df, netto_cost=netto_cost)
+
+        return df
+
+    def calculate_costs(self, df: pd.DataFrame, netto_cost: bool = False) -> pd.DataFrame:
+        """
+        Calculate costs based on the DataFrame and return it with a new 'cost' column.
+        
+        Args:
+            df: DataFrame containing power consumption data
+            netto_cost: If True, calculates costs based on net consumption (consumption - reversed)
+        
+        Returns:
+            DataFrame with an additional 'cost' column
+        """
+        if df.empty:
+            raise ValueError("DataFrame is empty. Please fetch data first.")
+        
         df['netto_consumption'] = (df['consumption'] - df['reversed']).clip(lower=0)
         if netto_cost:
             df['cost'] = df['netto_consumption'] / 1000 * df['price_per_kWh']
         else:
             df['cost'] = df['consumption'] / 1000 * df['price_per_kWh']
-
+        
         return df
 
     def _fetch_daily_data(self, day: int, channel: Optional[int] = None, 
@@ -435,6 +453,20 @@ class PowerConsumptionAnalyzer:
         return result_df
 
 
+    def correct_energy_price(self, df: pd.DataFrame, netto_static_cost:float, tax:float=0.19, netto_cost:bool=True) -> pd.DataFrame:
+        if df.empty:
+            raise ValueError("DataFrame is empty. Please fetch data first.")
+        if tax < 0 or tax > 1:
+            raise ValueError("Tax must be between 0 and 1 (e.g., 0.19 for 19%).")
+        if netto_static_cost < 0:
+            raise ValueError("Netto static cost must be non negative.")
+        if netto_static_cost > 1:
+            print(Warning("Netto static cost seems to be too high, check your value."))
+        
+        df['price_per_kWh'] = df['price_per_kWh']* (1 + tax) + netto_static_cost
+        
+        return self.calculate_costs(df, netto_cost=netto_cost)
+
 if __name__ == "__main__":
     import shellyKeys
     analyzer = PowerConsumptionAnalyzer(api_key=shellyKeys.API_KEY, device_id=shellyKeys.DEVICE_ID)
@@ -444,6 +476,7 @@ if __name__ == "__main__":
     
     # Alternative: Load from CSV
     df = analyzer.get_data_from_csv('power_consumption_data_365.csv')
+    df = analyzer.correct_energy_price(df, netto_static_cost=0.1767, tax=0.19, netto_cost=True)
     # analyzer.plot_heatmaps(df, 'power_consumption_heatmaps_from_csv.png')
     # Simulate battery storage
     battery_capacity_wh = 1920*0.9
@@ -456,11 +489,11 @@ if __name__ == "__main__":
         charging_power_w=charging_power_w
     )
 
-    analyzer.plot_heatmaps(df_with_battery, 'power_consumption_heatmaps_df_with_battery.png')
+    # analyzer.plot_heatmaps(df_with_battery, 'power_consumption_heatmaps_df_with_battery.png')
     print("\nWithout battery:")
-    print(f"Total cost: {df['cost'].sum():0.2f}€.")
+    print(f"Total cost: {df['cost'].sum():0.2f} €.")
     print(f"Weighted average cost per kWh ({df['netto_consumption'].sum()/1000:0.1f} kWh): \t{(df['cost'].sum() / df['netto_consumption'].sum()*100000):0.2f} cent")
     print("\nWith battery:")
-    print(f"Total cost: {df_with_battery['cost'].sum():0.2f}€. ")
+    print(f"Total cost: {df_with_battery['cost'].sum():0.2f} €. ")
     print(f"Weighted average cost per kWh ({df_with_battery['netto_consumption'].sum()/1000:0.1f} kWh): \t{(df_with_battery['cost'].sum() / df_with_battery['netto_consumption'].sum()*100000):0.2f} cent")
 
