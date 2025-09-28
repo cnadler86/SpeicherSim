@@ -16,7 +16,7 @@ class PowerConsumptionAnalyzer:
     def __init__(self, api_key: str, device_id: str):
         self.KEY = api_key
         self.ID = device_id
-        self.URL = "https://shelly-88-eu.shelly.cloud/v2/statistics/power-consumption/em-3p?channel=%i&id=%s&auth_key=%s"
+        self.BASE_URL = "https://shelly-88-eu.shelly.cloud/v2/statistics/power-consumption/em-3p"
         self.client = AwattarClient('DE')
         self.df_lock = Lock()
         self.rate_limit_lock = Lock()
@@ -71,12 +71,22 @@ class PowerConsumptionAnalyzer:
                 except ValueError:
                     raise ValueError("Start and end dates must be in ISO format (YYYY-MM-DD).")
         
-        req = self.URL % (0, self.ID, self.KEY)
+        # Construct parameters dictionary
+        params = {
+            'channel': 0,
+            'id': self.ID,
+            'auth_key': self.KEY
+        }
         
         if start:
-            req += f"&date_range=day&date_from={start}&date_to={end}"
+            params.update({
+                'date_range': 'day',
+                'date_from': start,
+                'date_to': end
+            })
 
-        response = self.rate_limited_request(req)
+        # Use requests' built-in parameter handling
+        response = requests.get(self.BASE_URL, params=params, timeout=10)
         data = msgspec.json.decode(response.content) if response else None
         
         if data:
@@ -232,12 +242,35 @@ class PowerConsumptionAnalyzer:
         :return: A pandas DataFrame containing the power consumption data.
         """
         try:
-            df = pd.read_csv(file_path, parse_dates=['datetime'], index_col='datetime')
-            # Ensure numeric columns are properly typed
+            # Lade CSV und konvertiere datetime
+            df = pd.read_csv(file_path, parse_dates=['datetime'])
+            
+            # Behandle Duplikate bei Zeitumstellung - Mittelwert der Messungen verwenden
+            if df.duplicated(subset=['datetime']).any():
+                print("Hinweis: Doppelte Zeitstempel gefunden (wahrscheinlich Zeitumstellung). Verwende Mittelwerte.")
+                df = df.groupby('datetime').agg({
+                    'consumption': 'mean',
+                    'reversed': 'mean',
+                    'min_voltage': 'mean',
+                    'max_voltage': 'mean',
+                    'cost': 'mean',
+                    'price_per_kWh': 'first',  # Preis sollte gleich sein
+                    'purpose': 'first',
+                    'tariff_id': 'first',
+                    'netto_consumption': 'mean'
+                }).reset_index()
+            
+            df.set_index('datetime', inplace=True)
+            
+            # Entferne Zeilen mit fehlenden Werten
+            df = df.dropna(subset=['consumption', 'reversed', 'price_per_kWh'])
+            
+            # Stelle sicher, dass numerische Spalten den korrekten Typ haben
             numeric_columns = ['consumption', 'reversed', 'min_voltage', 'max_voltage', 'cost', 'price_per_kWh']
             for col in numeric_columns:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce')
+            
             return df
         except FileNotFoundError:
             print(f"File not found: {file_path}")
@@ -266,7 +299,8 @@ class PowerConsumptionAnalyzer:
                 values=value,
                 index='hour',
                 columns='day',
-                aggfunc='mean'
+                aggfunc='mean',
+                observed=True
             )
 
         return pivot_tables['netto_consumption'], pivot_tables['cost'], pivot_tables['price_per_kWh']
@@ -411,7 +445,8 @@ class PowerConsumptionAnalyzer:
                     )
                     
                     # Add charging energy to consumption (considering efficiency)
-                    result_df.loc[hour, 'adjusted_consumption'] += charge_amount/efficiency
+                    current_consumption = pd.to_numeric(result_df.at[hour, 'adjusted_consumption'])
+                    result_df.at[hour, 'adjusted_consumption'] = pd.to_numeric(current_consumption + charge_amount/efficiency)
                     battery_energy += charge_amount
                     remaining_capacity = capacity_wh - battery_energy
                     result_df.loc[hour, 'battery_energy'] = battery_energy
@@ -432,7 +467,7 @@ class PowerConsumptionAnalyzer:
                     if battery_energy <= 0:
                         break
                         
-                    consumption = result_df.loc[hour, 'adjusted_consumption']
+                    consumption = pd.to_numeric(result_df.at[hour, 'adjusted_consumption'])
                     if consumption <= 0:
                         continue
                         
@@ -442,7 +477,7 @@ class PowerConsumptionAnalyzer:
                         battery_energy * efficiency
                     )
                     
-                    result_df.loc[hour, 'adjusted_consumption'] -= possible_discharge
+                    result_df.loc[hour, 'adjusted_consumption'] = consumption - possible_discharge
                     battery_energy -= possible_discharge/efficiency
                     result_df.loc[hour, 'battery_energy'] = battery_energy
             
@@ -472,16 +507,17 @@ if __name__ == "__main__":
     analyzer = PowerConsumptionAnalyzer(api_key=shellyKeys.API_KEY, device_id=shellyKeys.DEVICE_ID)
     
     # Analyze data for the last year
-    # df = analyzer.analyze_power_consumption(days_to_fetch=365, netto_cost=True)
+    # df = analyzer.analyze_power_consumption(days_to_fetch=360, netto_cost=True)
     
     # Alternative: Load from CSV
-    df = analyzer.get_data_from_csv('power_consumption_data_365.csv')
+    df = analyzer.get_data_from_csv('power_consumption_data_360.csv')
     df = analyzer.correct_energy_price(df, netto_static_cost=0.1767, tax=0.19, netto_cost=True)
     # analyzer.plot_heatmaps(df, 'power_consumption_heatmaps_from_csv.png')
+    
     # Simulate battery storage
-    battery_capacity_wh = 1920*0.9
-    battery_efficiency = 0.95
-    charging_power_w = 1000 
+    battery_capacity_wh = 2110*0.9
+    battery_efficiency = 0.9
+    charging_power_w = 1200 
     df_with_battery = analyzer.simulate_battery_storage(
         df, 
         capacity_wh=battery_capacity_wh, 
